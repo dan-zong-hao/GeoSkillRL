@@ -1,0 +1,46 @@
+﻿
+# Cache and generated files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+cache/
+*cache*/
+unsloth_compiled_cache/
+*/unsloth_compiled_cache/
+
+# Virtual environments and dependency installs
+.venv/
+venv/
+.swift_venv/
+site-packages/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+wandb/
+runs/
+logs/
+
+# Model/checkpoint artifacts kept out of git
+ckpt*/
+checkpoint*/
+checkpoints/
+final_hf/
+final-hf/
+finalhf/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.gguf

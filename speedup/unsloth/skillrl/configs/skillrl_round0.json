@@ -1,0 +1,27 @@
+{
+  "round": 0,
+  "offline_only": true,
+  "paths": {
+    "predictions": "/root/autodl-tmp/VQA/speedup/unsloth/eval_no_seg/results/zoom_only_fast_4gpu_repaired_predictions.jsonl",
+    "sft_input": "/root/autodl-tmp/VQA/json_data/zoom_json/sft/sft_verified_zoom.jsonl",
+    "rl_input": "/root/autodl-tmp/VQA/json_data/zoom_json/rl/rl-00000-of-00001.1.jsonl",
+    "skillbank": "/root/autodl-tmp/VQA/json_data/zoom_json/skillrl/skillbank_round0.json",
+    "failures": "/root/autodl-tmp/VQA/json_data/zoom_json/skillrl/failures_round0.jsonl",
+    "skill_sft": "/root/autodl-tmp/VQA/json_data/zoom_json/skillrl/skill_sft_round0.jsonl",
+    "bbox_rl": "/root/autodl-tmp/VQA/json_data/zoom_json/skillrl/bbox_rl_round0.jsonl",
+    "audit_report": "/root/autodl-tmp/VQA/speedup/unsloth/skillrl/reports/round0_audit.md"
+  },
+  "failure_mining": {
+    "iou_threshold": 0.3,
+    "deer_horse_definition": "bbox_wrong && crop_claim_correct"
+  },
+  "reward": {
+    "format": 0.05,
+    "apo_iou": 1.0,
+    "region_guided": 2.0,
+    "spatial": 1.5,
+    "spatial_penalty": 0.5,
+    "spatial_reward_families": ["top", "bottom", "left", "right", "corner"],
+    "comparative_locators": "parse_retrieve_audit_only"
+  }
+}

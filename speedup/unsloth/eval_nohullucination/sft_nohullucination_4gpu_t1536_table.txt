@@ -1,0 +1,12 @@
+Leaderboard	LLM	Max Size	Global	Region	Object	Avg.Acc	APO IoU
+sft_nohullucination_4gpu_t1536	Qwen3.5-4B	512x512	76.33	50.26	60.72	61.99	32.48
+
+Extra metrics
+valid_grammar_rate: 0.9990
+zoom_fired_rate: 0.7593
+seg_fired_rate: 0.7544
+bbox_pred_rate_on_bbox_gt: 0.9958
+apo_iou_on_zoomed_bbox_gt: 32.6174
+answer_contains_rate: 0.6198
+error_rate: 0.0006
+llm_judged_rate: 0.0000

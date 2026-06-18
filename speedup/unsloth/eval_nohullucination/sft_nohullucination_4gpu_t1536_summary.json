@@ -1,0 +1,57 @@
+{
+  "tag": "sft_nohullucination_4gpu_t1536",
+  "model": "/root/autodl-tmp/VQA/speedup/unsloth/sft_nohullucination/final_hf",
+  "n_samples": 9734,
+  "n_missing_images": 0,
+  "table": {
+    "Global": 76.3316151202749,
+    "Region": 50.26132404181185,
+    "Object": 60.72407045009784,
+    "Avg.Acc": 61.988904869529485,
+    "APO IoU": 32.48087225222792
+  },
+  "extra": {
+    "valid_grammar_rate": 0.9989726731045819,
+    "zoom_fired_rate": 0.759297308403534,
+    "seg_fired_rate": 0.754366139305527,
+    "bbox_pred_rate_on_bbox_gt": 0.9958142046988928,
+    "apo_iou_on_zoomed_bbox_gt": 32.61740202033898,
+    "answer_contains_rate": 0.6197863160057531,
+    "error_rate": 0.0006163961372508733,
+    "llm_judged_rate": 0.0
+  },
+  "counts": {
+    "by_type": {
+      "global": 2328,
+      "object": 5110,
+      "region": 2296
+    },
+    "by_category": {
+      "Scene Type": 879,
+      "Object category refinement": 701,
+      "Object relative position / context": 921,
+      "Function": 62,
+      "Object state / motion / activity": 781,
+      "Object color / pattern": 910,
+      "Urban-Rural": 685,
+      "Object material / surface": 518,
+      "Object shape / structure": 819,
+      "Season": 238,
+      "Object function / usage": 460,
+      "Counting": 615,
+      "Region status": 327,
+      "Region function": 467,
+      "Object existence": 355,
+      "Other visual features": 465,
+      "Object category": 433,
+      "Localization": 45,
+      "Attribute": 52,
+      "Comparison": 1
+    },
+    "actions": {
+      "none": 2343,
+      "zoom+seg": 7343,
+      "zoom": 48
+    }
+  }
+}

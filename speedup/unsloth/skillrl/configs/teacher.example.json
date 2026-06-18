@@ -1,0 +1,8 @@
+{
+  "provider": "deepseek",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-v4",
+  "api_key_env": "DEEPSEEK_API_KEY",
+  "enabled": false,
+  "notes": "V1 offline loop does not call the teacher. V2 should add caching, retries, and rate limits."
+}
