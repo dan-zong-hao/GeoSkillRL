@@ -1,42 +1,124 @@
 {
-  "created_utc": "2026-06-25",
-  "official_verl": {
-    "repository": "https://github.com/verl-project/verl.git",
-    "path": "/root/autodl-tmp/verl",
-    "branch": "main",
-    "commit": "a28a7f2ad7e9e4355a2c1201f3b39782778141a8",
-    "source_tree_modified": false
-  },
-  "runtime_probe": {
-    "python": "3.12.3",
-    "torch": "2.10.0+cu128",
-    "cuda": "12.8",
-    "transformers": "5.13.0.dev0",
-    "transformers_path": "/root/autodl-tmp/transformers-main",
-    "transformers_commit": "9b6af5d77de78f0a57a098b2809009ad6ec0cfe3",
-    "vllm": "0.18.0",
-    "flash_attn": null,
-    "verl_installed_package": "0.9.0.dev",
-    "verl_import_path": "/root/autodl-tmp/verl/verl/__init__.py",
-    "pyarrow": "23.0.1",
-    "datasets": "4.3.0",
-    "pillow": "12.1.1",
-    "qwen_vl_utils": "0.0.14",
-    "huggingface_hub": "1.20.1",
-    "safetensors": "0.8.0",
-    "TransferQueue": "0.1.8"
-  },
-  "gpu_probe": [
-    {
-      "index": 0,
-      "name": "NVIDIA RTX 6000D",
-      "memory_total_mib": 85651
+  "python": "3.12.3 | packaged by Anaconda, Inc. | (main, May  6 2024, 19:46:43) [GCC 11.2.0]",
+  "python_executable": "/root/autodl-tmp/VQA/.venv/bin/python",
+  "cuda_visible_devices": "0,1,2,3",
+  "nvidia_smi": "index, name, memory.total [MiB], driver_version\n0, NVIDIA RTX 6000D, 85651 MiB, 595.71.05\n1, NVIDIA RTX 6000D, 85651 MiB, 595.71.05\n2, NVIDIA RTX 6000D, 85651 MiB, 595.71.05\n3, NVIDIA RTX 6000D, 85651 MiB, 595.71.05",
+  "nvcc": "bash: line 1: nvcc: command not found",
+  "packages": {
+    "torch": {
+      "version": "2.10.0+cu128",
+      "file": "/root/autodl-tmp/VQA/.venv/lib/python3.12/site-packages/torch/__init__.py"
+    },
+    "transformers": {
+      "version": "5.13.0.dev0",
+      "file": "/root/autodl-tmp/transformers-main/src/transformers/__init__.py"
+    },
+    "vllm": {
+      "version": "0.18.0",
+      "file": "/root/autodl-tmp/VQA/.venv/lib/python3.12/site-packages/vllm/__init__.py"
+    },
+    "ray": {
+      "version": "2.50.0",
+      "file": "/root/autodl-tmp/VQA/.venv/lib/python3.12/site-packages/ray/__init__.py"
+    },
+    "verl": {
+      "version": "0.8.0.dev",
+      "file": "/root/autodl-tmp/VQA/verl/verl/__init__.py"
+    },
+    "qwen_vl_utils": {
+      "version": "?",
+      "file": "/root/autodl-tmp/VQA/.venv/lib/python3.12/site-packages/qwen_vl_utils/__init__.py"
+    },
+    "transfer_queue": {
+      "version": "0.1.8",
+      "file": "/root/autodl-tmp/VQA/.venv/lib/python3.12/site-packages/transfer_queue/__init__.py"
+    },
+    "datasets": {
+      "version": "4.3.0",
+      "file": "/root/autodl-tmp/VQA/.venv/lib/python3.12/site-packages/datasets/__init__.py"
+    },
+    "pyarrow": {
+      "version": "23.0.1",
+      "file": "/root/autodl-tmp/VQA/.venv/lib/python3.12/site-packages/pyarrow/__init__.py"
+    },
+    "PIL": {
+      "version": "12.1.1",
+      "file": "/root/autodl-tmp/VQA/.venv/lib/python3.12/site-packages/PIL/__init__.py"
     }
-  ],
-  "notes": [
-    "The official verl source is pinned by commit and should be imported before any installed verl package.",
-    "vLLM 0.18.0 was selected because the official verl Qwen3.5 example pins this vLLM generation; Qwen3.5 config loading requires the editable transformers main checkout recorded above.",
-    "Flash Attention is not installed in this .venv, so smoke scripts force attn_implementation=sdpa.",
-    "Only one GPU was visible during the probe, so three-GPU smoke scripts are present but were not executed."
-  ]
+  },
+  "verl_commit": "7aed6b230776f963fa09509c10d9c3a767d1102c",
+  "model_path": "/root/autodl-tmp/VQA/speedup/unsloth/geoskillrl_apo_experiments/output/no_seg_vlm_rewrite_primitive/final_hf_verl",
+  "model": {
+    "model_type": "qwen3_5",
+    "architectures": [
+      "Qwen3_5ForConditionalGeneration"
+    ],
+    "processor_class": "Qwen3VLProcessor",
+    "tokenizer_len": 248077,
+    "image_token_id": 248056,
+    "vision_config": {
+      "transformers_version": "5.13.0.dev0",
+      "architectures": null,
+      "output_hidden_states": false,
+      "return_dict": true,
+      "dtype": "bfloat16",
+      "chunk_size_feed_forward": 0,
+      "is_encoder_decoder": false,
+      "id2label": {
+        "0": "LABEL_0",
+        "1": "LABEL_1"
+      },
+      "label2id": {
+        "LABEL_0": 0,
+        "LABEL_1": 1
+      },
+      "problem_type": null,
+      "depth": 24,
+      "hidden_size": 1024,
+      "hidden_act": "gelu_pytorch_tanh",
+      "intermediate_size": 4096,
+      "num_heads": 16,
+      "in_channels": 3,
+      "patch_size": 16,
+      "spatial_merge_size": 2,
+      "temporal_patch_size": 2,
+      "out_hidden_size": 2560,
+      "num_position_embeddings": 2304,
+      "initializer_range": 0.02,
+      "_name_or_path": "",
+      "deepstack_visual_indexes": [],
+      "model_type": "qwen3_5_vision",
+      "output_attentions": false
+    }
+  },
+  "processor_probe": {
+    "single_image": {
+      "num_images": 1,
+      "input_ids_shape": [
+        1,
+        79
+      ],
+      "image_tokens": 64,
+      "feature_count": 256,
+      "expected_image_tokens": 64,
+      "alignment_ok": true,
+      "raw_tail": "rt|><|image_pad|><|vision_end|> image 1<|im_end|>\n<|im_start|>assistant\n<think>\n"
+    },
+    "double_image": {
+      "num_images": 2,
+      "input_ids_shape": [
+        1,
+        148
+      ],
+      "image_tokens": 128,
+      "feature_count": 512,
+      "expected_image_tokens": 128,
+      "alignment_ok": true,
+      "raw_tail": "rt|><|image_pad|><|vision_end|> image 2<|im_end|>\n<|im_start|>assistant\n<think>\n"
+    }
+  },
+  "vllm_probe": {
+    "single_image": "The global image shows a plain white background",
+    "double_image": "The global satellite image shows a coastal area"
+  }
 }

@@ -1,0 +1,7 @@
+reward:
+  custom_reward_function:
+    path: /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/reward/reward_manager.py
+    name: compute_score
+
+# Enable v2 only for explicit experiments:
+#   ZOOMEARTH_REWARD_VERSION=v2 bash scripts/run_train_4gpu.sh ...

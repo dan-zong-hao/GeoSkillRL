@@ -1,1 +1,2 @@
-"""Reward components and manager for GeoSkillRL verl GRPO."""
+"""Reward components for bbox-only ZoomEarth GRPO."""
+

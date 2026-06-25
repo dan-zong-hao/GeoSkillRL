@@ -1,236 +1,327 @@
-"""Official verl AgentLoop for GeoSkillRL ZoomEarth rollouts."""
+#!/usr/bin/env python3
+"""verl AgentLoop for bbox-only two-stage ZoomEarth GRPO."""
 from __future__ import annotations
 
+import copy
 import logging
 import os
 from typing import Any
 from uuid import uuid4
 
-from PIL import Image
+from agent.crop_environment import make_legacy_crop
+from agent.protocol import extract_answer, extract_zoom, stable_extra_fields, tag_mask_or_all, truncate_after
 
-from speedup.unsloth.skillrl.verl_grpo.agent.crop_environment import crop_from_original
-from speedup.unsloth.skillrl.verl_grpo.agent.zoom_protocol import (
-    build_zoom_response_mask,
-    count_masked,
-    decode_token_ids,
-    ensure_aligned_response,
-    extract_answer,
-)
-
-try:  # Imported lazily in unit tests that do not have official verl on sys.path.
-    from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutput
+try:  # pragma: no cover - exercised in the verl runtime environment.
+    from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutput, register
     from verl.utils.profiler import simple_timer
     from verl.utils.rollout_trace import rollout_trace_op
-    from verl.workers.rollout.replica import TokenOutput
-except Exception:  # pragma: no cover
-    AgentLoopBase = object  # type: ignore
-    AgentLoopOutput = None  # type: ignore
-    TokenOutput = Any  # type: ignore
+    from verl.utils.tokenizer import get_processor_token_id
+except Exception:  # pragma: no cover - lets local unit tests import helpers without verl installed.
+    class AgentLoopBase:  # type: ignore[no-redef]
+        pass
 
-    def simple_timer(_name, _metrics):
-        class _Timer:
-            def __enter__(self):
-                return None
+    class AgentLoopOutput:  # type: ignore[no-redef]
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
 
-            def __exit__(self, *_exc):
-                return False
+    def register(_name):  # type: ignore[no-redef]
+        def deco(cls):
+            return cls
 
-        return _Timer()
+        return deco
 
-    def rollout_trace_op(fn):
-        return fn
+    def get_processor_token_id(processor, token_name: str):  # type: ignore[no-redef]
+        token_id = getattr(processor, f"{token_name}_token_id", None)
+        return int(token_id) if token_id is not None else None
+
+    def rollout_trace_op(func):  # type: ignore[no-redef]
+        return func
+
+    class simple_timer:  # type: ignore[no-redef]
+        def __init__(self, name, metrics):
+            self.name = name
+            self.metrics = metrics
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
 
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
-VISION_TOKEN = "<|vision_start|><|image_pad|><|vision_end|>"
 
-
-def _encode_no_special(tokenizer: Any, text: str) -> list[int]:
-    if hasattr(tokenizer, "encode"):
-        try:
-            return list(tokenizer.encode(text, add_special_tokens=False))
-        except TypeError:
-            return list(tokenizer.encode(text))
-    out = tokenizer(text, add_special_tokens=False)
-    return list(out["input_ids"] if isinstance(out, dict) else out)
-
-
-def build_crop_observation_text() -> str:
-    return (
-        "\nZoomed crop image to verify:\n"
-        f"{VISION_TOKEN}\n"
-        "Use the crop to answer the question. If the crop does not contain the requested target, "
-        "answer from the available visual evidence without claiming the crop is correct.\n"
+def build_stage2_messages(role: str) -> list[dict[str, Any]]:
+    text = (
+        "Zoomed crop image to verify. Use the crop to answer the question. "
+        "If the crop does not contain the requested target, answer from the available visual evidence."
     )
+    if role == "tool":
+        return [{"role": "tool", "content": [{"type": "image"}, {"type": "text", "text": text}]}]
+    if role == "user":
+        return [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]}]
+    if role == "assistant+user":
+        return [
+            {"role": "assistant", "content": "I will inspect the zoomed crop before answering."},
+            {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text}]},
+        ]
+    raise ValueError(f"unsupported stage2_observation_role={role!r}")
 
 
+@register("zoomearth_full_agent")
 class ZoomEarthAgentLoop(AgentLoopBase):
-    """Two-stage ZoomEarth loop with token-in-token-out Stage 1 optimization.
+    """Two-stage bbox-only ZoomEarth loop.
 
-    Stage 1 is the only optimized segment by default. Stage 2 can be enabled for
-    validation so answer accuracy is measured without assigning answer signal
-    onto zoom tokens.
+    The first generation emits a zoom action, then a processor-encoded crop
+    observation is appended before the second generation emits an answer.
     """
 
     def __init__(
         self,
         *args,
-        generate_stage2: bool = False,
-        optimize_answer: bool = False,
-        stage1_max_tokens: int = 256,
-        stage2_max_tokens: int = 128,
-        coord_mode: str = "max_side",
+        stage2_observation_role: str = "user",
+        crop_max_size: int = 512,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        self.generate_stage2 = bool(generate_stage2)
-        self.optimize_answer = bool(optimize_answer)
-        self.stage1_max_tokens = int(stage1_max_tokens)
-        self.stage2_max_tokens = int(stage2_max_tokens)
-        self.coord_mode = coord_mode
+        self.prompt_length = self.rollout_config.prompt_length
         self.response_length = self.rollout_config.response_length
+        self.stage2_observation_role = stage2_observation_role
+        self.crop_max_size = crop_max_size
+
+    async def _generate(
+        self,
+        *,
+        request_id: str,
+        prompt_ids: list[int],
+        sampling_params: dict[str, Any],
+        images: list[Any] | None,
+        videos: list[Any] | None = None,
+        audios: list[Any] | None = None,
+        mm_processor_kwargs: dict[str, Any] | None = None,
+        metrics: dict[str, Any],
+    ):
+        with simple_timer("generate_sequences", metrics):
+            return await self.server_manager.generate(
+                request_id=request_id,
+                prompt_ids=prompt_ids,
+                sampling_params=sampling_params,
+                image_data=images,
+                video_data=videos,
+                audio_data=audios,
+                mm_processor_kwargs=mm_processor_kwargs,
+            )
+
+    def _decode(self, token_ids: list[int]) -> str:
+        return self.tokenizer.decode(token_ids, skip_special_tokens=False)
+
+    def _generated_mm_token_ids(self) -> set[int]:
+        processor = getattr(self, "processor", None)
+        token_ids: set[int] = set()
+        for token_name in ("image", "video"):
+            token_id = get_processor_token_id(processor, token_name)
+            if token_id is not None:
+                token_ids.add(int(token_id))
+        return token_ids
+
+    def _strip_generated_mm_tokens(
+        self,
+        token_ids: list[int],
+        log_probs: list[float] | None = None,
+    ) -> tuple[list[int], list[float] | None, int]:
+        blocked = self._generated_mm_token_ids()
+        if not blocked:
+            return token_ids, log_probs, 0
+        kept_ids: list[int] = []
+        kept_log_probs: list[float] | None = [] if log_probs is not None else None
+        removed = 0
+        for idx, token_id in enumerate(token_ids):
+            if token_id in blocked:
+                removed += 1
+                continue
+            kept_ids.append(token_id)
+            if kept_log_probs is not None:
+                kept_log_probs.append(log_probs[idx] if idx < len(log_probs) else 0.0)
+        return kept_ids, kept_log_probs, removed
 
     @rollout_trace_op
-    async def run(self, sampling_params: dict[str, Any], priority: int = 0, **kwargs) -> AgentLoopOutput:
-        priority = int(priority)
-        messages = list(kwargs["raw_prompt"])
-        extra_info = kwargs.get("extra_info", {}) or {}
+    async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
+        messages = copy.deepcopy(list(kwargs["raw_prompt"]))
+        extra_info = dict(kwargs.get("extra_info", {}) or {})
+        retrieved_skill_ids = list(extra_info.get("retrieved_skill_ids") or [])
+        metrics: dict[str, Any] = {}
+        request_id = uuid4().hex
 
         multi_modal_data = await self.process_multi_modal_info(messages)
-        images = list(multi_modal_data.get("images") or [])
+        images = multi_modal_data.get("images")
         videos = multi_modal_data.get("videos")
         audios = multi_modal_data.get("audios")
         mm_processor_kwargs = self._get_mm_processor_kwargs(audios)
 
         prompt_ids = await self.apply_chat_template(
             messages,
-            images=images or None,
+            images=images,
             videos=videos,
             audios=audios,
             mm_processor_kwargs=mm_processor_kwargs,
         )
 
-        metrics: dict[str, Any] = {}
-        request_id = f"det-{priority}" if getattr(self.rollout_config, "full_determinism", False) else uuid4().hex
-        stage1_sampling = {**sampling_params, "max_tokens": self.stage1_max_tokens}
-        with simple_timer("generate_stage1", metrics):
-            stage1: TokenOutput = await self.server_manager.generate(
-                request_id=request_id,
-                prompt_ids=prompt_ids,
-                sampling_params=stage1_sampling,
-                image_data=images or None,
-                video_data=videos,
-                audio_data=audios,
-                mm_processor_kwargs=mm_processor_kwargs,
-                priority=priority,
-            )
-        metrics["num_preempted"] = stage1.num_preempted if getattr(stage1, "num_preempted", None) is not None else -1
-
-        response_ids = list(stage1.token_ids)
-        response_mask, parsed = build_zoom_response_mask(response_ids, self.tokenizer)
-        response_logprobs = (
-            list(stage1.log_probs)
-            if getattr(stage1, "log_probs", None) is not None
-            else [0.0] * len(response_ids)
+        output1 = await self._generate(
+            request_id=request_id,
+            prompt_ids=prompt_ids,
+            sampling_params=sampling_params,
+            images=images,
+            videos=videos,
+            audios=audios,
+            mm_processor_kwargs=mm_processor_kwargs,
+            metrics=metrics,
         )
-        stage1_text = decode_token_ids(self.tokenizer, response_ids)
-        answer_text = ""
-        stage2_tokens = 0
-        crop_created = False
-        crop_info: dict[str, Any] | None = None
+        stage1_ids, stage1_logprobs, stage1_mm_removed = self._strip_generated_mm_tokens(
+            list(output1.token_ids),
+            list(output1.log_probs) if output1.log_probs else None,
+        )
+        stage1_raw_text = self._decode(stage1_ids)
+        zoom = extract_zoom(stage1_raw_text)
+        extra_fields = stable_extra_fields(
+            zoom_text=zoom.zoom_text,
+            stage1_raw_text=stage1_raw_text,
+            zoom_parse_ok=zoom.parse_ok,
+            pred_bbox_1024=zoom.bbox_1024,
+            stage1_tokens=len(stage1_ids),
+            retrieved_skill_ids=retrieved_skill_ids,
+        )
+        if stage1_mm_removed:
+            extra_fields["stage1_mm_tokens_stripped"] = stage1_mm_removed
+        stage1_mask, _ = tag_mask_or_all(self.tokenizer, stage1_ids, stage1_raw_text, "zoom")
+        if not zoom.parse_ok:
+            stage1_mask = [1] * len(stage1_ids)
+            return self._final_output(
+                prompt_ids=prompt_ids,
+                response_ids=stage1_ids,
+                response_mask=stage1_mask,
+                response_logprobs=stage1_logprobs,
+                multi_modal_data=multi_modal_data,
+                mm_processor_kwargs=mm_processor_kwargs,
+                metrics=metrics,
+                extra_fields=extra_fields,
+                routed_experts=getattr(output1, "routed_experts", None),
+            )
 
-        if self.generate_stage2:
-            crop_image = None
-            if parsed.zoom_parse_ok and parsed.pred_bbox_1024 is not None:
-                original_image_path = extra_info.get("original_image_path")
-                if original_image_path:
-                    try:
-                        crop_image, crop_result = crop_from_original(
-                            original_image_path,
-                            parsed.pred_bbox_1024,
-                            coord_mode=extra_info.get("bbox_coord_mode", self.coord_mode),
-                        )
-                        crop_info = crop_result.to_dict()
-                        crop_created = True
-                    except Exception as exc:  # keep malformed environment from crashing validation rollout
-                        logger.warning("crop creation failed for %s: %s", extra_info.get("question_id"), exc)
+        try:
+            crop, crop_meta = make_legacy_crop(
+                extra_info.get("original_image_path") or extra_info.get("global_image_path"),
+                zoom.bbox_1024 or [0, 0, 0, 0],
+                max_size=self.crop_max_size,
+            )
+        except Exception as exc:
+            extra_fields["tool_error"] = f"{type(exc).__name__}: {exc}"
+            raise
 
-            if crop_image is not None:
-                obs_ids = _encode_no_special(self.tokenizer, build_crop_observation_text())
-                stage2_prompt_ids = prompt_ids + response_ids + obs_ids
-                stage2_images = images + [crop_image]
-                stage2_sampling = {**sampling_params, "max_tokens": self.stage2_max_tokens}
-                with simple_timer("generate_stage2", metrics):
-                    stage2: TokenOutput = await self.server_manager.generate(
-                        request_id=request_id,
-                        prompt_ids=stage2_prompt_ids,
-                        sampling_params=stage2_sampling,
-                        image_data=stage2_images,
-                        video_data=videos,
-                        audio_data=audios,
-                        mm_processor_kwargs=mm_processor_kwargs,
-                        priority=priority,
-                    )
-                stage2_ids = list(stage2.token_ids)
-                stage2_tokens = len(stage2_ids)
-                response_ids = response_ids + obs_ids + stage2_ids
-                response_mask = response_mask + [0] * len(obs_ids) + (
-                    [1] * len(stage2_ids) if self.optimize_answer else [0] * len(stage2_ids)
-                )
-                stage2_logprobs = (
-                    list(stage2.log_probs)
-                    if getattr(stage2, "log_probs", None) is not None
-                    else [0.0] * len(stage2_ids)
-                )
-                response_logprobs = response_logprobs + [0.0] * len(obs_ids) + stage2_logprobs
-                answer_text = decode_token_ids(self.tokenizer, stage2_ids)
-                multi_modal_data["images"] = stage2_images
-
-        response_ids = response_ids[: self.response_length]
-        response_mask = response_mask[: self.response_length]
-        response_logprobs = response_logprobs[: self.response_length]
-        ensure_aligned_response(response_ids, response_mask, response_logprobs)
-
-        extra_fields = dict(getattr(stage1, "extra_fields", {}) or {})
+        observation_messages = build_stage2_messages(self.stage2_observation_role)
+        observation_ids = await self.apply_chat_template(
+            observation_messages,
+            images=[crop],
+            videos=None,
+            remove_system_prompt=True,
+        )
+        stage2_prompt_ids = prompt_ids + stage1_ids + observation_ids
+        stage2_images = list(images or []) + [crop]
+        multi_modal_data_out = dict(multi_modal_data)
+        multi_modal_data_out["images"] = stage2_images
         extra_fields.update(
             {
-                "zoom_text": parsed.zoom_text,
-                "answer_text": answer_text,
-                "pred_bbox_1024": parsed.pred_bbox_1024,
-                "zoom_parse_ok": parsed.zoom_parse_ok,
-                "answer_parse_ok": extract_answer(answer_text) is not None,
-                "zoom_mask_tokens": count_masked(response_mask),
-                "stage1_tokens": len(stage1.token_ids),
-                "stage2_tokens": stage2_tokens,
-                "crop_created": crop_created,
-                "crop_info": crop_info,
-                "stage1_raw_text": stage1_text,
-                "zoom_parse_error": parsed.error,
+                "crop_created": True,
+                "tool_observation_tokens": len(observation_ids),
+                "crop_meta": crop_meta,
             }
         )
-        output_multi_modal = {}
-        if multi_modal_data.get("images") is not None:
-            output_multi_modal["images"] = multi_modal_data["images"]
-        if videos is not None:
-            output_multi_modal["videos"] = videos
-        if audios is not None:
-            output_multi_modal["audios"] = audios
 
+        output2 = await self._generate(
+            request_id=request_id,
+            prompt_ids=stage2_prompt_ids,
+            sampling_params=sampling_params,
+            images=[crop],
+            videos=videos,
+            audios=audios,
+            mm_processor_kwargs=mm_processor_kwargs,
+            metrics=metrics,
+        )
+        stage2_ids, stage2_logprobs, stage2_mm_removed = self._strip_generated_mm_tokens(
+            list(output2.token_ids),
+            list(output2.log_probs) if output2.log_probs else None,
+        )
+        stage2_raw_text = self._decode(stage2_ids)
+        answer = extract_answer(stage2_raw_text)
+        stage2_mask, _ = tag_mask_or_all(self.tokenizer, stage2_ids, stage2_raw_text, "answer")
+        if not answer.parse_ok:
+            stage2_mask = [1] * len(stage2_ids)
+        extra_fields.update(
+            {
+                "answer_text": answer.answer_text,
+                "answer_pred": answer.answer_pred,
+                "stage2_raw_text": stage2_raw_text,
+                "answer_parse_ok": answer.parse_ok,
+                "stage2_tokens": len(stage2_ids),
+                "trajectory_text": truncate_after(stage1_raw_text, "</zoom>") + "\n" + stage2_raw_text,
+            }
+        )
+        if stage2_mm_removed:
+            extra_fields["stage2_mm_tokens_stripped"] = stage2_mm_removed
+
+        response_ids = stage1_ids + observation_ids + stage2_ids
+        response_mask = stage1_mask + [0] * len(observation_ids) + stage2_mask
+        response_logprobs = None
+        if stage1_logprobs or stage2_logprobs:
+            response_logprobs = (
+                list(stage1_logprobs or [0.0] * len(stage1_ids))
+                + [0.0] * len(observation_ids)
+                + list(stage2_logprobs or [0.0] * len(stage2_ids))
+            )
+        routed_experts = getattr(output2, "routed_experts", None) or getattr(output1, "routed_experts", None)
+        return self._final_output(
+            prompt_ids=prompt_ids,
+            response_ids=response_ids,
+            response_mask=response_mask,
+            response_logprobs=response_logprobs,
+            multi_modal_data=multi_modal_data_out,
+            mm_processor_kwargs=mm_processor_kwargs,
+            metrics=metrics,
+            extra_fields=extra_fields,
+            routed_experts=routed_experts,
+        )
+
+    def _final_output(
+        self,
+        *,
+        prompt_ids: list[int],
+        response_ids: list[int],
+        response_mask: list[int],
+        response_logprobs: list[float] | None,
+        multi_modal_data: dict[str, Any],
+        mm_processor_kwargs: dict[str, Any],
+        metrics: dict[str, Any],
+        extra_fields: dict[str, Any],
+        routed_experts: Any,
+    ) -> AgentLoopOutput:
+        response_ids = response_ids[: self.response_length]
+        response_mask = response_mask[: self.response_length]
+        if response_logprobs is not None:
+            response_logprobs = response_logprobs[: self.response_length]
+        if routed_experts is not None:
+            routed_experts = routed_experts[: len(prompt_ids) + self.response_length]
+        metrics.setdefault("num_preempted", -1)
         return AgentLoopOutput(
             prompt_ids=prompt_ids,
             response_ids=response_ids,
             response_mask=response_mask,
             response_logprobs=response_logprobs,
-            routed_experts=(
-                stage1.routed_experts[: len(prompt_ids) + self.response_length]
-                if getattr(stage1, "routed_experts", None) is not None
-                else None
-            ),
-            multi_modal_data=output_multi_modal,
+            routed_experts=routed_experts,
+            multi_modal_data=multi_modal_data,
             mm_processor_kwargs=mm_processor_kwargs,
-            num_turns=3 if self.generate_stage2 and crop_created else 2,
+            reward_score=None,
+            num_turns=4,
             metrics=metrics,
-            extra_fields=extra_fields,
+            extra_fields=stable_extra_fields(**extra_fields),
         )

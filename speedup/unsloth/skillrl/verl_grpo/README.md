@@ -1,57 +1,49 @@
-# GeoSkillRL Official verl GRPO
+# bbox-only ZoomEarth GRPO over verl
 
-This is the official verl migration for ZoomEarth-style GeoSkillRL GRPO.
+This directory contains the project-side implementation for bbox-only ZoomEarth
+GRPO using verl v0.8.0. It covers object/region bbox samples only and does not
+claim full whether-to-crop training.
 
-The rollout path is:
-
-`LRS-GRO JSONL -> verl Parquet -> RLHFDataset -> ZoomEarthAgentLoop -> vLLM async rollout -> GeoRewardManager -> main_ppo GRPO`.
-
-## Setup
+## Bootstrap
 
 ```bash
-bash /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/scripts/bootstrap_verl.sh
-source /root/autodl-tmp/VQA/.venv_verl/bin/activate
-export PYTHONPATH=/root/autodl-tmp/VQA:/root/autodl-tmp/verl:$PYTHONPATH
+cd /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo
+bash scripts/bootstrap_verl.sh
+bash scripts/probe_environment.sh
 ```
 
-The pinned official commit is recorded in `VERL_COMMIT`.
+`/root/autodl-tmp/VQA/verl` is pinned to commit
+`7aed6b230776f963fa09509c10d9c3a767d1102c`. Official verl source is not
+modified by this implementation.
 
 ## Data
 
 ```bash
-python /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/prepare_zoomearth_parquet.py \
-  --train-jsonl /root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_train.jsonl \
-  --dev-jsonl /root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_dev.jsonl
-
-python /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/validate_zoomearth_parquet.py \
-  /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/processed/train.parquet \
-  /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/processed/val.parquet
+/root/autodl-tmp/VQA/.venv_verl_qwen35/bin/python data/prepare_zoomearth_parquet.py
+/root/autodl-tmp/VQA/.venv_verl_qwen35/bin/python data/validate_zoomearth_parquet.py data/parquet/train.parquet
 ```
 
-## BBox Audit
+The default input is `/root/autodl-tmp/VQA/speedup/origin/geoskill/splits/rl_train.jsonl`.
+Only `object|region` rows with a four-value bbox are used. SkillBank retrieval is
+frozen into `extra_info` and uses only question text.
+
+## Smoke and Training
 
 ```bash
-python /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/audit_bbox_coordinates.py \
-  --jsonl /root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_train.jsonl
+bash scripts/run_train_1gpu_smoke.sh trainer.total_training_steps=2
+bash scripts/run_train_4gpu_smoke.sh trainer.total_training_steps=20
+bash scripts/run_train_4gpu.sh
 ```
 
-Keep both `max_side` and `xy` modes until the overlay audit is manually accepted.
+Formal 4GPU training defaults:
 
-## Training Gates
+- `CUDA_VISIBLE_DEVICES=0,1,2,3`
+- `trainer.n_gpus_per_node=4`
+- `actor_rollout_ref.rollout.calculate_log_probs=False`
+- `actor_rollout_ref.actor.use_kl_loss=True`
+- `algorithm.use_kl_in_reward=False`
+- `actor_rollout_ref.actor.kl_loss_coef=0.04`
+- `actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-mean`
 
-```bash
-bash scripts/run_rollout_smoke.sh
-bash scripts/run_train_1gpu_smoke.sh
-bash scripts/run_train_3gpu_smoke.sh
-```
+Diagnostic smoke scripts set `calculate_log_probs=True`.
 
-Do not run full training until the three smoke gates and the 128-sample effectiveness gate pass.
-
-## Validation
-
-```bash
-MODEL_PATH=/path/to/baseline bash scripts/run_val_only.sh
-MODEL_PATH=/path/to/final bash scripts/run_val_only.sh
-```
-
-Primary checkpoint metric is Hit@0.3. Answer accuracy is a validation metric only and is not part of the first policy reward.

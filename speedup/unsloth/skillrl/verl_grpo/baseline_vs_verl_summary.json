@@ -1,8 +1,0 @@
-{
-  "status": "not_run",
-  "baseline_model": null,
-  "verl_model": null,
-  "primary_metric": "hit03",
-  "answer_accuracy_drop_pp": null,
-  "full_training_allowed": false
-}

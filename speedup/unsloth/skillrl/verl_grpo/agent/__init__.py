@@ -1,1 +1,2 @@
-"""Agent loop and environment helpers for GeoSkillRL verl GRPO."""
+"""Project-side AgentLoop implementation for bbox-only ZoomEarth GRPO."""
+

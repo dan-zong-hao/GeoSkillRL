@@ -1,0 +1,30 @@
+{
+  "selected": "user",
+  "results": [
+    {
+      "role": "tool",
+      "ok": false,
+      "error": "TemplateError: No user query found in messages."
+    },
+    {
+      "role": "user",
+      "ok": true,
+      "image_tokens": 64,
+      "feature_count": 256,
+      "expected_image_tokens": 64,
+      "merge_size": 2,
+      "generation_prompt_ok": true,
+      "observation_starts_as_user": true
+    },
+    {
+      "role": "assistant+user",
+      "ok": false,
+      "image_tokens": 64,
+      "feature_count": 256,
+      "expected_image_tokens": 64,
+      "merge_size": 2,
+      "generation_prompt_ok": true,
+      "observation_starts_as_user": false
+    }
+  ]
+}

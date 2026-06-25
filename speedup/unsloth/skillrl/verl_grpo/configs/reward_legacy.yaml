@@ -1,0 +1,5 @@
+reward:
+  custom_reward_function:
+    path: /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/reward/reward_manager.py
+    name: compute_score
+
