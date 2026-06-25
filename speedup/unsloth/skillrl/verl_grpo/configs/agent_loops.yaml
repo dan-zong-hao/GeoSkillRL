@@ -1,0 +1,15 @@
+- name: zoomearth_zoom_agent
+  _target_: speedup.unsloth.skillrl.verl_grpo.agent.zoomearth_agent_loop.ZoomEarthAgentLoop
+  generate_stage2: false
+  optimize_answer: false
+  stage1_max_tokens: 256
+  stage2_max_tokens: 128
+  coord_mode: max_side
+
+- name: zoomearth_full_agent
+  _target_: speedup.unsloth.skillrl.verl_grpo.agent.zoomearth_agent_loop.ZoomEarthAgentLoop
+  generate_stage2: true
+  optimize_answer: false
+  stage1_max_tokens: 256
+  stage2_max_tokens: 128
+  coord_mode: max_side

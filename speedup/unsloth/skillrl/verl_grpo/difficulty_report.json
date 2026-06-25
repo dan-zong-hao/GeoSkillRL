@@ -1,0 +1,4 @@
+{
+  "status": "not_run",
+  "reason": "Requires SFT G=4 rollout outputs. Run data/screen_normal_level.py after rollout generation."
+}

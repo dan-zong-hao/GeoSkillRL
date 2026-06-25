@@ -1,0 +1,7 @@
+{
+  "status": "not_run",
+  "rollout_smoke": "not_run",
+  "train_1gpu_smoke": "not_run",
+  "train_3gpu_smoke": "not_run",
+  "reason": "Current environment probe found no vLLM or Flash Attention and only one visible GPU."
+}

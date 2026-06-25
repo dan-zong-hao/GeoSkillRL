@@ -1,0 +1,42 @@
+{
+  "created_utc": "2026-06-25",
+  "official_verl": {
+    "repository": "https://github.com/verl-project/verl.git",
+    "path": "/root/autodl-tmp/verl",
+    "branch": "main",
+    "commit": "a28a7f2ad7e9e4355a2c1201f3b39782778141a8",
+    "source_tree_modified": false
+  },
+  "runtime_probe": {
+    "python": "3.12.3",
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "transformers": "5.13.0.dev0",
+    "transformers_path": "/root/autodl-tmp/transformers-main",
+    "transformers_commit": "9b6af5d77de78f0a57a098b2809009ad6ec0cfe3",
+    "vllm": "0.18.0",
+    "flash_attn": null,
+    "verl_installed_package": "0.9.0.dev",
+    "verl_import_path": "/root/autodl-tmp/verl/verl/__init__.py",
+    "pyarrow": "23.0.1",
+    "datasets": "4.3.0",
+    "pillow": "12.1.1",
+    "qwen_vl_utils": "0.0.14",
+    "huggingface_hub": "1.20.1",
+    "safetensors": "0.8.0",
+    "TransferQueue": "0.1.8"
+  },
+  "gpu_probe": [
+    {
+      "index": 0,
+      "name": "NVIDIA RTX 6000D",
+      "memory_total_mib": 85651
+    }
+  ],
+  "notes": [
+    "The official verl source is pinned by commit and should be imported before any installed verl package.",
+    "vLLM 0.18.0 was selected because the official verl Qwen3.5 example pins this vLLM generation; Qwen3.5 config loading requires the editable transformers main checkout recorded above.",
+    "Flash Attention is not installed in this .venv, so smoke scripts force attn_implementation=sdpa.",
+    "Only one GPU was visible during the probe, so three-GPU smoke scripts are present but were not executed."
+  ]
+}

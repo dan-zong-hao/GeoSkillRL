@@ -1,50 +1,57 @@
-# Corrected ZoomEarth GRPO
+# GeoSkillRL Official verl GRPO
 
-This directory contains a clean implementation of the fixes described in the
-analysis note, while leaving the previous `grpo_zoomearth` experiment intact.
+This is the official verl migration for ZoomEarth-style GeoSkillRL GRPO.
 
-Key changes:
+The rollout path is:
 
-- Split `zoom_reward` and `answer_reward`; do not broadcast a mixed scalar
-  reward to both stages.
-- Default objective is `zoom_only`: only `<zoom>...</zoom>` response tokens
-  receive policy loss. Turn 2 is still generated for measurement, but answer
-  tokens are masked out unless `--objective split` is selected.
-- Generation stores raw `prompt input_ids`, `response_ids`, `old_logps`, and a
-  response-local loss mask. Training reuses those tensors instead of computing
-  a prompt boundary with a text-only tokenizer.
-- Group advantages use `(reward - mean) / (std + eps)`. Zero-variance groups get
-  zero advantage locally instead of forcing all ranks to skip the update.
-- Skill retrieval uses question text only, not the dataset `label` field.
-- Bbox-to-original-image conversion defaults to independent x/y scaling. Use
-  `--bbox_coord_mode max_side` to reproduce the old max-side mapping.
+`LRS-GRO JSONL -> verl Parquet -> RLHFDataset -> ZoomEarthAgentLoop -> vLLM async rollout -> GeoRewardManager -> main_ppo GRPO`.
 
-Smoke test:
+## Setup
 
 ```bash
-cd /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo
-source /root/autodl-tmp/VQA/.venv/bin/activate
-python test_verl_grpo_adapter.py
+bash /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/scripts/bootstrap_verl.sh
+source /root/autodl-tmp/VQA/.venv_verl/bin/activate
+export PYTHONPATH=/root/autodl-tmp/VQA:/root/autodl-tmp/verl:$PYTHONPATH
 ```
 
-Training smoke run:
+The pinned official commit is recorded in `VERL_COMMIT`.
+
+## Data
 
 ```bash
-source /root/autodl-tmp/VQA/.venv/bin/activate
-bash run_smoke.sh
+python /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/prepare_zoomearth_parquet.py \
+  --train-jsonl /root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_train.jsonl \
+  --dev-jsonl /root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_dev.jsonl
+
+python /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/validate_zoomearth_parquet.py \
+  /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/processed/train.parquet \
+  /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/processed/val.parquet
 ```
 
-Full training:
+## BBox Audit
 
 ```bash
-cd /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo
-bash run_grpo_full_single_gpu.sh
-bash run_grpo_full_3gpu.sh
+python /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo/data/audit_bbox_coordinates.py \
+  --jsonl /root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_train.jsonl
 ```
 
-Background 3-GPU run:
+Keep both `max_side` and `xy` modes until the overlay audit is manually accepted.
+
+## Training Gates
 
 ```bash
-cd /root/autodl-tmp/VQA/speedup/unsloth/skillrl/verl_grpo
-bash run_background_3gpu.sh
+bash scripts/run_rollout_smoke.sh
+bash scripts/run_train_1gpu_smoke.sh
+bash scripts/run_train_3gpu_smoke.sh
 ```
+
+Do not run full training until the three smoke gates and the 128-sample effectiveness gate pass.
+
+## Validation
+
+```bash
+MODEL_PATH=/path/to/baseline bash scripts/run_val_only.sh
+MODEL_PATH=/path/to/final bash scripts/run_val_only.sh
+```
+
+Primary checkpoint metric is Hit@0.3. Answer accuracy is a validation metric only and is not part of the first policy reward.
