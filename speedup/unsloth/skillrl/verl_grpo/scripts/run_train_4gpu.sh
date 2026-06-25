@@ -62,19 +62,21 @@ ACTOR=(
   actor_rollout_ref.actor.strategy=fsdp2
   actor_rollout_ref.actor.fsdp_config.strategy=fsdp2
   actor_rollout_ref.actor.fsdp_config.fsdp_size="${FSDP_SIZE:-4}"
-  actor_rollout_ref.actor.fsdp_config.param_offload=True
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=True
-  actor_rollout_ref.actor.fsdp_config.offload_policy=True
+  actor_rollout_ref.actor.fsdp_config.param_offload="${ACTOR_PARAM_OFFLOAD:-False}"
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload="${ACTOR_OPTIMIZER_OFFLOAD:-False}"
+  actor_rollout_ref.actor.fsdp_config.offload_policy="${ACTOR_OFFLOAD_POLICY:-False}"
   actor_rollout_ref.actor.fsdp_config.reshard_after_forward=True
   actor_rollout_ref.actor.use_dynamic_bsz=False
+  actor_rollout_ref.actor.checkpoint.save_contents="${ACTOR_CKPT_SAVE_CONTENTS:-[model,extra]}"
+  actor_rollout_ref.actor.checkpoint.load_contents="${ACTOR_CKPT_LOAD_CONTENTS:-[model,extra]}"
 )
 
 REF=(
   actor_rollout_ref.ref.strategy=fsdp2
   actor_rollout_ref.ref.fsdp_config.strategy=fsdp2
   actor_rollout_ref.ref.fsdp_config.fsdp_size="${FSDP_SIZE:-4}"
-  actor_rollout_ref.ref.fsdp_config.param_offload=True
-  actor_rollout_ref.ref.fsdp_config.offload_policy=True
+  actor_rollout_ref.ref.fsdp_config.param_offload="${REF_PARAM_OFFLOAD:-False}"
+  actor_rollout_ref.ref.fsdp_config.offload_policy="${REF_OFFLOAD_POLICY:-False}"
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1
 )
 
@@ -116,7 +118,9 @@ TRAINER=(
   trainer.balance_batch=False
   trainer.default_local_dir="${OUT_DIR}"
   trainer.save_freq="${SAVE_FREQ:-20}"
-  trainer.test_freq="${TEST_FREQ:-20}"
+  trainer.test_freq="${TEST_FREQ:--1}"
+  trainer.max_actor_ckpt_to_keep="${MAX_ACTOR_CKPT_TO_KEEP:-1}"
+  trainer.max_critic_ckpt_to_keep="${MAX_CRITIC_CKPT_TO_KEEP:-1}"
   trainer.total_epochs="${TOTAL_EPOCHS:-1}"
   trainer.val_before_train="${VAL_BEFORE_TRAIN:-False}"
 )

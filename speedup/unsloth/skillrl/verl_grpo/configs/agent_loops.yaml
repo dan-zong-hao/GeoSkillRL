@@ -2,4 +2,5 @@
   _target_: agent.zoomearth_agent_loop.ZoomEarthAgentLoop
   stage2_observation_role: user
   crop_max_size: 512
-
+  stage1_max_tokens: 512
+  stage2_max_tokens: 1024

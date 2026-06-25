@@ -23,10 +23,12 @@ class FakeServer:
         self.outputs = list(outputs)
         self.prompts = []
         self.images = []
+        self.sampling_params = []
 
     async def generate(self, **kwargs):
         self.prompts.append(kwargs["prompt_ids"])
         self.images.append(kwargs.get("image_data"))
+        self.sampling_params.append(kwargs["sampling_params"])
         return self.outputs.pop(0)
 
 
@@ -45,6 +47,8 @@ def test_agent_loop_preserves_stage1_tokens_and_masks_observation(tmp_path: Path
     loop.response_length = 4096
     loop.stage2_observation_role = "user"
     loop.crop_max_size = 512
+    loop.stage1_max_tokens = 512
+    loop.stage2_max_tokens = 1024
     loop.tokenizer = CharTokenizer()
     loop.processor = types.SimpleNamespace(image_token_id=999, video_token_id=1000)
     loop.server_manager = FakeServer(
@@ -77,6 +81,8 @@ def test_agent_loop_preserves_stage1_tokens_and_masks_observation(tmp_path: Path
     response_mask = result.response_mask
     assert 999 not in response_ids
     assert result.extra_fields["stage1_mm_tokens_stripped"] == 2
+    assert loop.server_manager.sampling_params[0]["max_tokens"] == 512
+    assert loop.server_manager.sampling_params[1]["max_tokens"] == 1024
     assert loop.server_manager.prompts[1][: 2 + len(enc(stage1))] == [100, 101] + enc(stage1)
     assert loop.server_manager.images[0] == ["global-image"]
     assert len(loop.server_manager.images[1]) == 1

@@ -83,6 +83,8 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         *args,
         stage2_observation_role: str = "user",
         crop_max_size: int = 512,
+        stage1_max_tokens: int = 512,
+        stage2_max_tokens: int = 1024,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -90,6 +92,8 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         self.response_length = self.rollout_config.response_length
         self.stage2_observation_role = stage2_observation_role
         self.crop_max_size = crop_max_size
+        self.stage1_max_tokens = stage1_max_tokens
+        self.stage2_max_tokens = stage2_max_tokens
 
     async def _generate(
         self,
@@ -116,6 +120,11 @@ class ZoomEarthAgentLoop(AgentLoopBase):
 
     def _decode(self, token_ids: list[int]) -> str:
         return self.tokenizer.decode(token_ids, skip_special_tokens=False)
+
+    def _sampling_params_with_max_tokens(self, sampling_params: dict[str, Any], max_tokens: int) -> dict[str, Any]:
+        params = dict(sampling_params)
+        params["max_tokens"] = max(1, int(max_tokens))
+        return params
 
     def _generated_mm_token_ids(self) -> set[int]:
         processor = getattr(self, "processor", None)
@@ -171,7 +180,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         output1 = await self._generate(
             request_id=request_id,
             prompt_ids=prompt_ids,
-            sampling_params=sampling_params,
+            sampling_params=self._sampling_params_with_max_tokens(sampling_params, self.stage1_max_tokens),
             images=images,
             videos=videos,
             audios=audios,
@@ -226,6 +235,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             videos=None,
             remove_system_prompt=True,
         )
+        stage2_token_budget = self.response_length - len(stage1_ids) - len(observation_ids)
         stage2_prompt_ids = prompt_ids + stage1_ids + observation_ids
         stage2_images = list(images or []) + [crop]
         multi_modal_data_out = dict(multi_modal_data)
@@ -234,14 +244,31 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             {
                 "crop_created": True,
                 "tool_observation_tokens": len(observation_ids),
+                "stage2_token_budget": stage2_token_budget,
                 "crop_meta": crop_meta,
             }
         )
+        if stage2_token_budget < 1:
+            extra_fields["tool_error"] = "stage1 response left no room for crop answer"
+            return self._final_output(
+                prompt_ids=prompt_ids,
+                response_ids=stage1_ids,
+                response_mask=stage1_mask,
+                response_logprobs=stage1_logprobs,
+                multi_modal_data=multi_modal_data,
+                mm_processor_kwargs=mm_processor_kwargs,
+                metrics=metrics,
+                extra_fields=extra_fields,
+                routed_experts=getattr(output1, "routed_experts", None),
+            )
 
         output2 = await self._generate(
             request_id=request_id,
             prompt_ids=stage2_prompt_ids,
-            sampling_params=sampling_params,
+            sampling_params=self._sampling_params_with_max_tokens(
+                sampling_params,
+                min(self.stage2_max_tokens, stage2_token_budget),
+            ),
             images=[crop],
             videos=videos,
             audios=audios,
