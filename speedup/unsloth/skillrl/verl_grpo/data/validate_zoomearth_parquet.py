@@ -60,6 +60,8 @@ def main() -> None:
         if not isinstance(extra, dict):
             raise SystemExit(f"row {i}: invalid extra_info")
         indices.append(int(extra["index"]))
+        if int(extra["index"]) < 0:
+            raise SystemExit(f"row {i}: extra_info.index must be non-negative")
         signatures.append(row_signature(extra))
         if extra.get("type") not in {"object", "region"}:
             raise SystemExit(f"row {i}: non bbox type {extra.get('type')}")
@@ -70,8 +72,6 @@ def main() -> None:
             raise SystemExit(f"row {i}: external label leaked into extra_info")
     if len(indices) != len(set(indices)):
         raise SystemExit("extra_info.index is not unique")
-    if indices != sorted(indices) or indices != list(range(len(indices))):
-        raise SystemExit("extra_info.index must be stable contiguous order")
     if signatures != sorted(signatures):
         raise SystemExit("rows are not sorted by stable source signature")
     if args.reference is not None:

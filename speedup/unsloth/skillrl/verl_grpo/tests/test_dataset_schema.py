@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 
 from agent.skill_retriever import SkillRetriever
-from data.prepare_zoomearth_parquet import build_record, normalize_row
+from data.prepare_zoomearth_parquet import build_record, normalize_row, stable_index
 
 
 def test_dataset_record_schema_and_no_label_leak(tmp_path: Path):
@@ -25,9 +25,10 @@ def test_dataset_record_schema_and_no_label_leak(tmp_path: Path):
         }
     )
     assert row is not None
-    record = build_record(row, 0, SkillRetriever(enabled=False), tmp_path / "cache")
+    index = stable_index(row)
+    record = build_record(row, index, SkillRetriever(enabled=False), tmp_path / "cache")
     assert record["agent_name"] == "zoomearth_full_agent"
-    assert record["extra_info"]["index"] == 0
+    assert record["extra_info"]["index"] == index
     assert "label" not in record["extra_info"]
     assert "label_cleaned" not in record["extra_info"]
 
@@ -39,4 +40,3 @@ def test_skillbank_uses_question_not_external_label(tmp_path: Path):
     no_locator = retriever.build("What color is the bridge?")
     with_locator = retriever.build("What color is the left-most bridge?")
     assert no_locator["retrieved_skill_ids"] != with_locator["retrieved_skill_ids"]
-

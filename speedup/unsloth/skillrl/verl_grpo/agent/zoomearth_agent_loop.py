@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent.crop_environment import make_legacy_crop
-from agent.protocol import extract_answer, extract_zoom, stable_extra_fields, tag_mask_or_all, truncate_after
+from agent.protocol import extract_answer, extract_zoom, stable_extra_fields, tag_mask_or_all
 
 try:  # pragma: no cover - exercised in the verl runtime environment.
     from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutput, register
@@ -121,18 +121,58 @@ class ZoomEarthAgentLoop(AgentLoopBase):
     def _decode(self, token_ids: list[int]) -> str:
         return self.tokenizer.decode(token_ids, skip_special_tokens=False)
 
-    def _sampling_params_with_max_tokens(self, sampling_params: dict[str, Any], max_tokens: int) -> dict[str, Any]:
+    def _sampling_params_with_max_tokens(
+        self,
+        sampling_params: dict[str, Any],
+        max_tokens: int,
+        *,
+        stop: list[str] | None = None,
+        bad_words: list[str] | None = None,
+    ) -> dict[str, Any]:
         params = dict(sampling_params)
         params["max_tokens"] = max(1, int(max_tokens))
+        if stop:
+            existing_stop = params.get("stop")
+            if existing_stop is None:
+                stops: list[str] = []
+            elif isinstance(existing_stop, str):
+                stops = [existing_stop]
+            else:
+                stops = list(existing_stop)
+            params["stop"] = list(dict.fromkeys(stops + stop))
+            params["include_stop_str_in_output"] = True
+        if bad_words:
+            existing_bad_words = params.get("bad_words") or []
+            params["bad_words"] = list(dict.fromkeys(list(existing_bad_words) + bad_words))
         return params
+
+    def _generated_bad_words(self, *, forbid_zoom: bool = False, forbid_answer: bool = False) -> list[str]:
+        words = ["<|vision_start|>", "<|vision_end|>", "<|image_pad|>", "<|video_pad|>"]
+        if forbid_zoom:
+            words.extend(["<zoom>", "</zoom>"])
+        if forbid_answer:
+            words.extend(["<answer>", "</answer>"])
+        return words
 
     def _generated_mm_token_ids(self) -> set[int]:
         processor = getattr(self, "processor", None)
+        tokenizer = getattr(processor, "tokenizer", None) or getattr(self, "tokenizer", None)
         token_ids: set[int] = set()
         for token_name in ("image", "video"):
             token_id = get_processor_token_id(processor, token_name)
             if token_id is not None:
                 token_ids.add(int(token_id))
+        special_tokens_map = getattr(tokenizer, "special_tokens_map", {}) or {}
+        for key in ("vision_bos_token", "vision_eos_token", "image_token", "video_token"):
+            token = special_tokens_map.get(key)
+            if not token:
+                continue
+            try:
+                ids = tokenizer.encode(token, add_special_tokens=False)
+            except Exception:
+                ids = []
+            if len(ids) == 1:
+                token_ids.add(int(ids[0]))
         return token_ids
 
     def _strip_generated_mm_tokens(
@@ -154,6 +194,43 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             if kept_log_probs is not None:
                 kept_log_probs.append(log_probs[idx] if idx < len(log_probs) else 0.0)
         return kept_ids, kept_log_probs, removed
+
+    def _truncate_after_marker(
+        self,
+        token_ids: list[int],
+        log_probs: list[float] | None,
+        raw_text: str,
+        marker: str,
+    ) -> tuple[list[int], list[float] | None, str, int]:
+        marker_end = (raw_text or "").lower().find(marker.lower())
+        if marker_end < 0:
+            return token_ids, log_probs, raw_text, 0
+        marker_end += len(marker)
+        for end_idx in range(1, len(token_ids) + 1):
+            decoded = self._decode(token_ids[:end_idx])
+            if len(decoded) >= marker_end:
+                trimmed_log_probs = log_probs[:end_idx] if log_probs is not None else None
+                return token_ids[:end_idx], trimmed_log_probs, decoded, len(token_ids) - end_idx
+        return token_ids, log_probs, raw_text, 0
+
+    def _assistant_end_ids(self, generated_ids: list[int]) -> list[int]:
+        tokenizer = getattr(self, "tokenizer", None)
+        token_ids: list[int] = []
+        eos_token_id = getattr(tokenizer, "eos_token_id", None)
+        if eos_token_id is not None:
+            try:
+                token_ids = [int(eos_token_id)]
+            except Exception:
+                token_ids = []
+        if not token_ids:
+            eos_token = getattr(tokenizer, "eos_token", None) or "<|im_end|>"
+            try:
+                token_ids = [int(v) for v in tokenizer.encode(eos_token, add_special_tokens=False)]
+            except Exception:
+                token_ids = []
+        if token_ids and generated_ids[-len(token_ids) :] == token_ids:
+            return []
+        return token_ids
 
     @rollout_trace_op
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
@@ -180,7 +257,12 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         output1 = await self._generate(
             request_id=request_id,
             prompt_ids=prompt_ids,
-            sampling_params=self._sampling_params_with_max_tokens(sampling_params, self.stage1_max_tokens),
+            sampling_params=self._sampling_params_with_max_tokens(
+                sampling_params,
+                self.stage1_max_tokens,
+                stop=["</zoom>"],
+                bad_words=self._generated_bad_words(forbid_answer=True),
+            ),
             images=images,
             videos=videos,
             audios=audios,
@@ -193,6 +275,15 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         )
         stage1_raw_text = self._decode(stage1_ids)
         zoom = extract_zoom(stage1_raw_text)
+        stage1_trailing_removed = 0
+        if zoom.parse_ok:
+            stage1_ids, stage1_logprobs, stage1_raw_text, stage1_trailing_removed = self._truncate_after_marker(
+                stage1_ids,
+                stage1_logprobs,
+                stage1_raw_text,
+                "</zoom>",
+            )
+            zoom = extract_zoom(stage1_raw_text)
         extra_fields = stable_extra_fields(
             zoom_text=zoom.zoom_text,
             stage1_raw_text=stage1_raw_text,
@@ -203,6 +294,8 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         )
         if stage1_mm_removed:
             extra_fields["stage1_mm_tokens_stripped"] = stage1_mm_removed
+        if stage1_trailing_removed:
+            extra_fields["stage1_trailing_tokens_stripped"] = stage1_trailing_removed
         stage1_mask, _ = tag_mask_or_all(self.tokenizer, stage1_ids, stage1_raw_text, "zoom")
         if not zoom.parse_ok:
             stage1_mask = [1] * len(stage1_ids)
@@ -216,6 +309,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
                 metrics=metrics,
                 extra_fields=extra_fields,
                 routed_experts=getattr(output1, "routed_experts", None),
+                num_turns=2,
             )
 
         try:
@@ -235,14 +329,16 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             videos=None,
             remove_system_prompt=True,
         )
-        stage2_token_budget = self.response_length - len(stage1_ids) - len(observation_ids)
-        stage2_prompt_ids = prompt_ids + stage1_ids + observation_ids
+        assistant_end_ids = self._assistant_end_ids(stage1_ids)
+        stage2_token_budget = self.response_length - len(stage1_ids) - len(assistant_end_ids) - len(observation_ids)
+        stage2_prompt_ids = prompt_ids + stage1_ids + assistant_end_ids + observation_ids
         stage2_images = list(images or []) + [crop]
         multi_modal_data_out = dict(multi_modal_data)
         multi_modal_data_out["images"] = stage2_images
         extra_fields.update(
             {
                 "crop_created": True,
+                "assistant_end_tokens": len(assistant_end_ids),
                 "tool_observation_tokens": len(observation_ids),
                 "stage2_token_budget": stage2_token_budget,
                 "crop_meta": crop_meta,
@@ -260,6 +356,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
                 metrics=metrics,
                 extra_fields=extra_fields,
                 routed_experts=getattr(output1, "routed_experts", None),
+                num_turns=2,
             )
 
         output2 = await self._generate(
@@ -268,8 +365,10 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             sampling_params=self._sampling_params_with_max_tokens(
                 sampling_params,
                 min(self.stage2_max_tokens, stage2_token_budget),
+                stop=["</answer>"],
+                bad_words=self._generated_bad_words(forbid_zoom=True),
             ),
-            images=[crop],
+            images=stage2_images,
             videos=videos,
             audios=audios,
             mm_processor_kwargs=mm_processor_kwargs,
@@ -281,6 +380,15 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         )
         stage2_raw_text = self._decode(stage2_ids)
         answer = extract_answer(stage2_raw_text)
+        stage2_trailing_removed = 0
+        if answer.parse_ok:
+            stage2_ids, stage2_logprobs, stage2_raw_text, stage2_trailing_removed = self._truncate_after_marker(
+                stage2_ids,
+                stage2_logprobs,
+                stage2_raw_text,
+                "</answer>",
+            )
+            answer = extract_answer(stage2_raw_text)
         stage2_mask, _ = tag_mask_or_all(self.tokenizer, stage2_ids, stage2_raw_text, "answer")
         if not answer.parse_ok:
             stage2_mask = [1] * len(stage2_ids)
@@ -291,22 +399,27 @@ class ZoomEarthAgentLoop(AgentLoopBase):
                 "stage2_raw_text": stage2_raw_text,
                 "answer_parse_ok": answer.parse_ok,
                 "stage2_tokens": len(stage2_ids),
-                "trajectory_text": truncate_after(stage1_raw_text, "</zoom>") + "\n" + stage2_raw_text,
+                "trajectory_text": stage1_raw_text + "\n" + stage2_raw_text,
             }
         )
         if stage2_mm_removed:
             extra_fields["stage2_mm_tokens_stripped"] = stage2_mm_removed
+        if stage2_trailing_removed:
+            extra_fields["stage2_trailing_tokens_stripped"] = stage2_trailing_removed
 
-        response_ids = stage1_ids + observation_ids + stage2_ids
-        response_mask = stage1_mask + [0] * len(observation_ids) + stage2_mask
+        response_ids = stage1_ids + assistant_end_ids + observation_ids + stage2_ids
+        response_mask = stage1_mask + [0] * len(assistant_end_ids) + [0] * len(observation_ids) + stage2_mask
         response_logprobs = None
         if stage1_logprobs or stage2_logprobs:
             response_logprobs = (
                 list(stage1_logprobs or [0.0] * len(stage1_ids))
+                + [0.0] * len(assistant_end_ids)
                 + [0.0] * len(observation_ids)
                 + list(stage2_logprobs or [0.0] * len(stage2_ids))
             )
-        routed_experts = getattr(output2, "routed_experts", None) or getattr(output1, "routed_experts", None)
+        routed_experts = getattr(output2, "routed_experts", None)
+        if routed_experts is None:
+            routed_experts = getattr(output1, "routed_experts", None)
         return self._final_output(
             prompt_ids=prompt_ids,
             response_ids=response_ids,
@@ -317,6 +430,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             metrics=metrics,
             extra_fields=extra_fields,
             routed_experts=routed_experts,
+            num_turns=4,
         )
 
     def _final_output(
@@ -331,6 +445,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         metrics: dict[str, Any],
         extra_fields: dict[str, Any],
         routed_experts: Any,
+        num_turns: int,
     ) -> AgentLoopOutput:
         response_ids = response_ids[: self.response_length]
         response_mask = response_mask[: self.response_length]
@@ -348,7 +463,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             multi_modal_data=multi_modal_data,
             mm_processor_kwargs=mm_processor_kwargs,
             reward_score=None,
-            num_turns=4,
+            num_turns=num_turns,
             metrics=metrics,
             extra_fields=stable_extra_fields(**extra_fields),
         )

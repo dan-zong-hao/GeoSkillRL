@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ from agent.crop_environment import find_image, resize_image  # noqa: E402
 from agent.skill_retriever import DEFAULT_SKILLBANK, SkillRetriever  # noqa: E402
 
 
-DEFAULT_INPUT = Path("/root/autodl-tmp/VQA/speedup/origin/geoskill/splits/rl_train.jsonl")
+DEFAULT_INPUT = Path("/root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_train.jsonl")
 DEFAULT_OUT = ROOT / "data/parquet/train.parquet"
 
 SYSTEM_PROMPT = (
@@ -88,6 +89,12 @@ def cache_global_image(image_path: str, cache_dir: Path) -> tuple[str, list[int]
     return str(out), image_size
 
 
+def stable_index(row: dict[str, Any]) -> int:
+    stable_key = f"{row['question_id']}|{row['image_name']}|{row['question']}"
+    digest = hashlib.blake2b(stable_key.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big") & ((1 << 63) - 1)
+
+
 def build_record(row: dict[str, Any], index: int, retriever: SkillRetriever, cache_dir: Path) -> dict[str, Any]:
     global_image, image_size = cache_global_image(row["image_path"], cache_dir)
     skill_info = retriever.build(row["question"])
@@ -145,7 +152,10 @@ def main() -> None:
     if args.limit:
         rows = rows[: args.limit]
     retriever = SkillRetriever(args.skillbank, enabled=not args.no_skillbank)
-    records = [build_record(row, index=i, retriever=retriever, cache_dir=args.cache_dir) for i, row in enumerate(rows)]
+    records = [
+        build_record(row, index=stable_index(row), retriever=retriever, cache_dir=args.cache_dir)
+        for row in rows
+    ]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(records).to_parquet(args.output, index=False)
     print(json.dumps({"output": str(args.output), "records": len(records)}, ensure_ascii=False))
