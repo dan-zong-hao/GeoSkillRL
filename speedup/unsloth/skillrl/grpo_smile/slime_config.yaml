@@ -1,0 +1,6 @@
+zoomearth_stage1_max_tokens: 512
+zoomearth_stage2_max_tokens: 512
+zoomearth_crop_max_size: 512
+zoomearth_reward_version: legacy
+zoomearth_require_primitive_zoom: false
+
