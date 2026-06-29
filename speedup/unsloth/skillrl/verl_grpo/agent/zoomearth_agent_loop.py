@@ -147,7 +147,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
         return params
 
     def _generated_bad_words(self, *, forbid_zoom: bool = False, forbid_answer: bool = False) -> list[str]:
-        words = ["<|vision_start|>", "<|vision_end|>", "<|image_pad|>", "<|video_pad|>"]
+        words = ["<|vision_start|>", "<|vision_end|>", "<|image_pad|>", "<|video_pad|>", "<image>", "</image>"]
         if forbid_zoom:
             words.extend(["<zoom>", "</zoom>"])
         if forbid_answer:
@@ -260,7 +260,7 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             sampling_params=self._sampling_params_with_max_tokens(
                 sampling_params,
                 self.stage1_max_tokens,
-                stop=["</zoom>"],
+                stop=["</zoom>", "<|/zoom>", "<|/zoom|>"],
                 bad_words=self._generated_bad_words(forbid_answer=True),
             ),
             images=images,
@@ -288,6 +288,11 @@ class ZoomEarthAgentLoop(AgentLoopBase):
             zoom_text=zoom.zoom_text,
             stage1_raw_text=stage1_raw_text,
             zoom_parse_ok=zoom.parse_ok,
+            zoom_has_ref=zoom.has_ref,
+            zoom_has_box=zoom.has_box,
+            zoom_primitive_format_ok=zoom.primitive_format_ok,
+            zoom_ref_text=zoom.ref_text,
+            zoom_bbox_format=zoom.bbox_format,
             pred_bbox_1024=zoom.bbox_1024,
             stage1_tokens=len(stage1_ids),
             retrieved_skill_ids=retrieved_skill_ids,

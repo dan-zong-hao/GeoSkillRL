@@ -62,6 +62,14 @@ LOCATOR_PATTERNS = {
 }
 
 
+RELATION_RE = re.compile(
+    r"\b(?:directly\s+)?(?:to\s+the\s+)?"
+    r"(?P<relation>left|right|above|below|top|bottom|north|south|east|west)\s+of\s+the\s+"
+    r"(?P<referent>.+?)(?:\?|$)",
+    re.IGNORECASE,
+)
+
+
 def parse_locator(question: str) -> dict[str, Any]:
     q = (question or "").lower()
     axes = [name for name, patterns in LOCATOR_PATTERNS.items() if any(re.search(p, q) for p in patterns)]
@@ -69,6 +77,57 @@ def parse_locator(question: str) -> dict[str, Any]:
     horizontal = [x for x in axes if x in {"left", "right"}]
     family = "corner" if vertical and horizontal else (axes[0] if axes else "none")
     return {"has_locator": bool(axes), "family": family, "axes": axes}
+
+
+def _clean_phrase(value: str) -> str:
+    phrase = " ".join(str(value or "").strip(" ?.!,").split())
+    phrase = re.sub(r"^(?:the|a|an)\s+", "", phrase, flags=re.IGNORECASE)
+    phrase = re.split(
+        r"\s+\b(?:is|are|was|were|appears?|appear|arranged|designed|used|covered|made|located|"
+        r"mainly|primarily|mostly|a|an|or)\b",
+        phrase,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    return " ".join(phrase.strip(" ?.!,").split())
+
+
+def parse_stage2_relation(question: str) -> str:
+    match = RELATION_RE.search(question or "")
+    if not match:
+        return ""
+    relation = match.group("relation").lower()
+    aliases = {"east": "right", "west": "left", "north": "above", "south": "below", "top": "above", "bottom": "below"}
+    relation = aliases.get(relation, relation)
+    return f"{relation} of the referent"
+
+
+def extract_referent_phrase(question: str) -> str:
+    text = " ".join(str(question or "").strip().split())
+    relation_match = RELATION_RE.search(text)
+    if relation_match:
+        return _clean_phrase(relation_match.group("referent"))
+
+    of_match = re.search(r"\b(?:of|for|around|inside|within|from)\s+the\s+(.+?)(?:\?|$)", text, re.IGNORECASE)
+    if of_match:
+        phrase = _clean_phrase(of_match.group(1))
+        if phrase:
+            return phrase
+
+    locator_spans: list[tuple[int, int]] = []
+    for patterns in LOCATOR_PATTERNS.values():
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                locator_spans.append(match.span())
+    if locator_spans:
+        start = min(span[0] for span in locator_spans)
+        return _clean_phrase(text[start:])
+
+    subject_match = re.search(r"\b(?:is|are|does|do|what|which)\s+the\s+(.+?)(?:\?|$)", text, re.IGNORECASE)
+    if subject_match:
+        return _clean_phrase(subject_match.group(1))
+    return ""
 
 
 def load_skillbank(path: str | Path | None = None) -> list[dict[str, Any]]:
@@ -105,10 +164,13 @@ def retrieve_skills(question: str, skillbank: list[dict[str, Any]], max_skills: 
         triggers = [str(x) for x in skill.get("trigger", [])]
         covered = " ".join(str(x) for x in skill.get("covered_failure_types", []))
         skill_id = str(skill.get("skill_id") or skill.get("id") or skill.get("name") or "skill")
+        if skill_id == "corner_locator" and locator.get("family") != "corner":
+            continue
         hit = any(_trigger_hit(question or "", t) for t in triggers)
         axis_hit = any(axis in covered or axis in skill_id for axis in wanted)
         if hit or axis_hit:
-            scored.append(((2 if hit else 0) + (1 if axis_hit else 0), skill_id, skill))
+            corner_bonus = 3 if skill_id == "corner_locator" and locator.get("family") == "corner" else 0
+            scored.append(((2 if hit else 0) + (1 if axis_hit else 0) + corner_bonus, skill_id, skill))
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [skill for _, _, skill in scored[:max_skills]]
 
@@ -143,14 +205,19 @@ class SkillRetriever:
         self.enabled = enabled
         self.skillbank = load_skillbank(self.path) if enabled else []
 
-    def build(self, question: str) -> dict[str, Any]:
+    def build(self, question: str, category: str | None = None) -> dict[str, Any]:
         normalized_question = " ".join(str(question or "").split())
         retrieval_key = hashlib.sha1(normalized_question.lower().encode("utf-8")).hexdigest()[:16]
         skills = retrieve_skills(normalized_question, self.skillbank, self.max_skills) if self.enabled else []
+        referent = extract_referent_phrase(normalized_question)
+        locator = parse_locator(referent or normalized_question)
         return {
             "skill_block": format_skill_block(skills),
             "retrieved_skill_ids": skill_ids(skills),
             "retrieved_skills": skills,
             "skill_retrieval_key": retrieval_key,
+            "referent_phrase": referent,
+            "stage2_relation": parse_stage2_relation(normalized_question),
+            "stage1_locator_axes": list(locator.get("axes") or []),
+            "category": str(category or ""),
         }
-

@@ -19,21 +19,13 @@ modified by this implementation.
 ## Data
 
 ```bash
-/root/autodl-tmp/VQA/.venv/bin/python data/prepare_zoomearth_parquet.py \
-  --input /root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_train.jsonl \
-  --output data/parquet/train.parquet
-/root/autodl-tmp/VQA/.venv/bin/python data/prepare_zoomearth_parquet.py \
-  --input /root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_dev.jsonl \
-  --output data/parquet/dev.parquet
-/root/autodl-tmp/VQA/.venv/bin/python data/validate_zoomearth_parquet.py data/parquet/train.parquet
-/root/autodl-tmp/VQA/.venv/bin/python data/validate_zoomearth_parquet.py data/parquet/dev.parquet
+/root/autodl-tmp/VQA/.venv_verl_qwen35/bin/python data/prepare_zoomearth_parquet.py
+/root/autodl-tmp/VQA/.venv_verl_qwen35/bin/python data/validate_zoomearth_parquet.py data/parquet/train.parquet
 ```
 
-The train source is `/root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_train.jsonl`.
-The dev/eval source is `/root/autodl-tmp/VQA/speedup/unsloth/skillrl/stageA/data/splits/rl_dev.jsonl`.
-Only `object|region` rows with a four-value bbox are used, so global QA rows are
-excluded from this bbox-only ZoomEarth task. SkillBank retrieval is frozen into
-`extra_info` and uses only question text.
+The default input is `/root/autodl-tmp/VQA/speedup/origin/geoskill/splits/rl_train.jsonl`.
+Only `object|region` rows with a four-value bbox are used. SkillBank retrieval is
+frozen into `extra_info` and uses only question text.
 
 ## Smoke and Training
 

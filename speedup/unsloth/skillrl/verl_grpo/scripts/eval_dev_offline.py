@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 from agent.crop_environment import make_legacy_crop  # noqa: E402
 from agent.protocol import extract_answer, extract_zoom, truncate_after  # noqa: E402
 from agent.zoomearth_agent_loop import build_stage2_messages  # noqa: E402
-from reward.components_legacy import compute_episode_reward  # noqa: E402
+from reward.reward_manager import compute_score  # noqa: E402
 
 
 def as_list(value: Any) -> Any:
@@ -483,14 +483,15 @@ def build_result(
     gt = ground_truth_payload(row)
     zoom = extract_zoom(stage1_text)
     answer = extract_answer(stage2_text)
-    reward = compute_episode_reward(
-        question_id=str(extra.get("question_id") or ""),
-        question=str(extra.get("question") or ""),
-        zoom_text=stage1_text,
-        answer_text=stage2_text,
-        gt_bbox_1024=[float(v) for v in as_list(extra.get("gt_bbox_1024"))],
-        ground_truth=gt.get("ground_truth"),
-        image_size=tuple(int(v) for v in as_list(extra.get("image_size"))),
+    reward = compute_score(
+        str(row.get("data_source") or "geoskillrl_zoomearth_bbox_only"),
+        stage1_text + "\n" + stage2_text,
+        gt,
+        extra_info={
+            **extra,
+            "zoom_text": stage1_text,
+            "answer_text": stage2_text,
+        },
     )
     return {
         "question_id": extra.get("question_id"),
@@ -538,8 +539,17 @@ def eval_batch(
         processor,
         prompt_messages,
         max_new_tokens=args.stage1_max_new_tokens,
-        stop=["</zoom>"],
-        bad_words=["<|vision_start|>", "<|vision_end|>", "<|image_pad|>", "<|video_pad|>", "<answer>", "</answer>"],
+        stop=["</zoom>", "<|/zoom>", "<|/zoom|>"],
+        bad_words=[
+            "<|vision_start|>",
+            "<|vision_end|>",
+            "<|image_pad|>",
+            "<|video_pad|>",
+            "<image>",
+            "</image>",
+            "<answer>",
+            "</answer>",
+        ],
         do_sample=args.do_sample,
         temperature=args.temperature,
         top_p=args.top_p,

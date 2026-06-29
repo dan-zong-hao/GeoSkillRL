@@ -32,7 +32,7 @@ def compute_reward_v2(
     iou = apo_iou_fixed512_from_1024(parsed_zoom.bbox_1024, gt_bbox_1024, image_size)
     answer_ok = strict_answer_match(parsed_answer.answer_pred, ground_truth)
     region_guided = center_reward(float(legacy["center_distance"]))
-    fmt = 1.0 if parsed_zoom.parse_ok and parsed_answer.parse_ok else 0.0
+    fmt = 1.0 if parsed_zoom.primitive_format_ok and parsed_answer.parse_ok else 0.0
     parse_penalty = 1.0 if not parsed_zoom.parse_ok else 0.0
     oversized = area_penalty(parsed_zoom.bbox_1024, gt_bbox_1024)
     score = iou + region_guided + (1.0 if answer_ok else 0.0) + 0.05 * fmt - parse_penalty - oversized
@@ -41,8 +41,14 @@ def compute_reward_v2(
             "total": float(score),
             "score": float(score),
             "answer_correct": bool(answer_ok),
+            "R_format": float(0.05 * fmt),
+            "zoom_parse_ok": bool(parsed_zoom.parse_ok),
+            "zoom_has_ref": bool(parsed_zoom.has_ref),
+            "zoom_has_box": bool(parsed_zoom.has_box),
+            "zoom_primitive_format_ok": bool(parsed_zoom.primitive_format_ok),
+            "zoom_ref_text": parsed_zoom.ref_text,
+            "zoom_bbox_format": parsed_zoom.bbox_format,
             "reward_version": "v2",
         }
     )
     return legacy
-

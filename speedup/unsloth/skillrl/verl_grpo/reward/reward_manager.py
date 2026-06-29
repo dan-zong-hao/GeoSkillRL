@@ -9,6 +9,7 @@ from typing import Any
 from agent.protocol import extract_answer, extract_zoom
 from reward.components_legacy import compute_episode_reward
 from reward.components_v2 import compute_reward_v2
+from reward.components_v3 import compute_reward_v3
 
 
 def _maybe_json(value: Any) -> Any:
@@ -60,7 +61,7 @@ def compute_score(
         ground_truth_value = gt_payload
         gt_bbox = extra_info.get("gt_bbox_1024") or extra_info.get("bbox")
     zoom_text, answer_text = _structured_texts(solution_str, extra_info)
-    version = os.environ.get("ZOOMEARTH_REWARD_VERSION", extra_info.get("reward_version", "legacy"))
+    version = os.environ.get("ZOOMEARTH_REWARD_VERSION", extra_info.get("reward_version", "v3"))
     kwargs = dict(
         question_id=str(extra_info.get("question_id") or ""),
         question=str(extra_info.get("question") or ""),
@@ -70,9 +71,22 @@ def compute_score(
         ground_truth=ground_truth_value,
         image_size=_image_size(extra_info),
     )
-    result = compute_reward_v2(**kwargs) if version == "v2" else compute_episode_reward(**kwargs)
+    if version == "v3":
+        result = compute_reward_v3(
+            **kwargs,
+            category=str(
+                extra_info.get("category")
+                or (gt_payload.get("category") if isinstance(gt_payload, dict) else "")
+                or ""
+            ),
+            referent_phrase=str(extra_info.get("referent_phrase") or ""),
+            stage1_locator_axes=extra_info.get("stage1_locator_axes"),
+        )
+    elif version == "v2":
+        result = compute_reward_v2(**kwargs)
+    else:
+        result = compute_episode_reward(**kwargs)
     result["score"] = float(result["total"])
     result["data_source"] = data_source
     result["reward_version"] = version
     return result
-

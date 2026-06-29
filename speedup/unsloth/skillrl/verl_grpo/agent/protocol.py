@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 import string
 from dataclasses import dataclass
 from typing import Any
@@ -11,7 +12,13 @@ from typing import Any
 ZOOM_RE = re.compile(r"<zoom>\s*(.*?)\s*</zoom>", re.DOTALL | re.IGNORECASE)
 ANSWER_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", re.DOTALL | re.IGNORECASE)
 JSON_BBOX_RE = re.compile(r'"bbox_2d"\s*:\s*\[(.*?)\]', re.DOTALL | re.IGNORECASE)
+REF_RE = re.compile(r"<\|ref\|>\s*(.*?)\s*<\|/ref\|>", re.DOTALL | re.IGNORECASE)
 PRIMITIVE_BBOX_RE = re.compile(r"<\|box\|>\s*\[\[(.*?)\]\]\s*<\|/box\|>", re.DOTALL | re.IGNORECASE)
+PRIMITIVE_ZOOM_BODY_RE = re.compile(
+    r"^\s*<\|ref\|>\s*(?P<ref>.*?)\s*<\|/ref\|>\s*"
+    r"<\|box\|>\s*\[\[(?P<bbox>.*?)\]\]\s*<\|/box\|>\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
 COMPACT_BBOX_RE = re.compile(r"\[\[(.*?)\]\]", re.DOTALL)
 
 EXTRA_FIELD_DEFAULTS: dict[str, Any] = {
@@ -21,6 +28,11 @@ EXTRA_FIELD_DEFAULTS: dict[str, Any] = {
     "stage1_raw_text": "",
     "stage2_raw_text": "",
     "zoom_parse_ok": False,
+    "zoom_has_ref": False,
+    "zoom_has_box": False,
+    "zoom_primitive_format_ok": False,
+    "zoom_ref_text": "",
+    "zoom_bbox_format": "",
     "answer_parse_ok": False,
     "tool_error": "",
     "pred_bbox_1024": None,
@@ -37,6 +49,11 @@ class ParsedZoom:
     zoom_text: str
     bbox_1024: list[float] | None
     parse_ok: bool
+    has_ref: bool = False
+    has_box: bool = False
+    primitive_format_ok: bool = False
+    ref_text: str = ""
+    bbox_format: str = ""
 
 
 @dataclass(frozen=True)
@@ -82,23 +99,88 @@ def canonical_bbox_1024(bbox: Any) -> list[float] | None:
     return [x1, y1, x2, y2]
 
 
-def extract_zoom(text: str) -> ParsedZoom:
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def extract_zoom(text: str, *, allow_compact: bool | None = None, allow_json: bool | None = None) -> ParsedZoom:
     raw = text or ""
     match = ZOOM_RE.search(raw)
     if not match:
         return ParsedZoom("", None, False)
+    if allow_compact is None:
+        allow_compact = _env_flag("ALLOW_COMPACT_ZOOM", False)
+    if allow_json is None:
+        allow_json = bool(allow_compact)
     zoom_text = raw[match.start() : match.end()]
     body = match.group(1)
-    bbox = None
-    regexes = (PRIMITIVE_BBOX_RE, JSON_BBOX_RE)
+    ref_match = REF_RE.search(body)
+    ref_text = (ref_match.group(1).strip() if ref_match else "")
+    has_ref = bool(ref_text)
+
+    primitive_match = PRIMITIVE_ZOOM_BODY_RE.match(body)
+    if primitive_match:
+        bbox = canonical_bbox_1024(_parse_float_list(primitive_match.group("bbox")))
+        primitive_ref = primitive_match.group("ref").strip()
+        primitive_ok = bbox is not None and bool(primitive_ref)
+        return ParsedZoom(
+            zoom_text,
+            bbox,
+            primitive_ok,
+            has_ref=bool(primitive_ref),
+            has_box=bbox is not None,
+            primitive_format_ok=primitive_ok,
+            ref_text=primitive_ref,
+            bbox_format="primitive" if bbox is not None else "",
+        )
+
+    box_match = PRIMITIVE_BBOX_RE.search(body)
+    if box_match:
+        bbox = canonical_bbox_1024(_parse_float_list(box_match.group(1)))
+        return ParsedZoom(
+            zoom_text,
+            bbox,
+            False,
+            has_ref=has_ref,
+            has_box=bbox is not None,
+            primitive_format_ok=False,
+            ref_text=ref_text,
+            bbox_format="primitive" if bbox is not None else "",
+        )
+
+    json_match = JSON_BBOX_RE.search(body)
+    if json_match:
+        bbox = canonical_bbox_1024(_parse_float_list(json_match.group(1)))
+        return ParsedZoom(
+            zoom_text,
+            bbox,
+            bool(bbox is not None and allow_json),
+            has_ref=has_ref,
+            has_box=False,
+            primitive_format_ok=False,
+            ref_text=ref_text,
+            bbox_format="json" if bbox is not None else "",
+        )
+
     if "<|box|>" not in body and "<|/box|>" not in body:
-        regexes = regexes + (COMPACT_BBOX_RE,)
-    for regex in regexes:
-        bbox_match = regex.search(body)
-        if bbox_match:
-            bbox = canonical_bbox_1024(_parse_float_list(bbox_match.group(1)))
-            break
-    return ParsedZoom(zoom_text, bbox, bbox is not None)
+        compact_match = COMPACT_BBOX_RE.search(body)
+        if compact_match:
+            bbox = canonical_bbox_1024(_parse_float_list(compact_match.group(1)))
+            return ParsedZoom(
+                zoom_text,
+                bbox,
+                bool(bbox is not None and allow_compact),
+                has_ref=has_ref,
+                has_box=False,
+                primitive_format_ok=False,
+                ref_text=ref_text,
+                bbox_format="compact" if bbox is not None else "",
+            )
+
+    return ParsedZoom(zoom_text, None, False, has_ref=has_ref, ref_text=ref_text)
 
 
 def extract_answer(text: str) -> ParsedAnswer:

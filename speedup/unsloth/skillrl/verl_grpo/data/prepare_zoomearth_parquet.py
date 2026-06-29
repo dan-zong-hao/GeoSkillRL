@@ -26,6 +26,8 @@ SYSTEM_PROMPT = (
     "You are an intelligent remote sensing analyst. Given a satellite image, a question, "
     "and retrieved grounding skills, you must use exactly one zoom tool before answering:\n"
     "  <zoom><|ref|>target expression<|/ref|><|box|>[[x1,y1,x2,y2]]<|/box|></zoom>\n"
+    "The zoom tag must include both <|ref|>...<|/ref|> and <|box|>[[...]]<|/box|>; "
+    "<zoom>[[x1,y1,x2,y2]]</zoom> is invalid. "
     "Coordinates are normalized to the 0-1024 global image frame. First output one <zoom>; "
     "after the crop is shown, output exactly one <answer>...</answer>. Do not output a second zoom."
 )
@@ -97,7 +99,7 @@ def stable_index(row: dict[str, Any]) -> int:
 
 def build_record(row: dict[str, Any], index: int, retriever: SkillRetriever, cache_dir: Path) -> dict[str, Any]:
     global_image, image_size = cache_global_image(row["image_path"], cache_dir)
-    skill_info = retriever.build(row["question"])
+    skill_info = retriever.build(row["question"], row["category"])
     user_content = "<image>\n" + row["question"]
     if skill_info["skill_block"]:
         user_content += "\n\n" + skill_info["skill_block"]
@@ -133,6 +135,9 @@ def build_record(row: dict[str, Any], index: int, retriever: SkillRetriever, cac
             "skill_block": skill_info["skill_block"],
             "retrieved_skill_ids": skill_info["retrieved_skill_ids"],
             "skill_retrieval_key": skill_info["skill_retrieval_key"],
+            "referent_phrase": skill_info.get("referent_phrase", ""),
+            "stage2_relation": skill_info.get("stage2_relation", ""),
+            "stage1_locator_axes": skill_info.get("stage1_locator_axes", []),
         },
     }
 
